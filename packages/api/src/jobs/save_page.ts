@@ -7,11 +7,11 @@ import {
   CreateLabelInput,
 } from '../generated/graphql'
 import { userRepository } from '../repository/user'
+import { downloadOriginalContent } from '../services/library_item'
 import { saveFile } from '../services/save_file'
 import { savePage } from '../services/save_page'
 import { uploadFile } from '../services/upload_file'
 import { logger } from '../utils/logger'
-import { downloadStringFromBucket } from '../utils/uploads'
 
 const signToken = promisify(jwt.sign)
 
@@ -37,7 +37,6 @@ interface Data {
   savedAt?: string
   publishedAt?: string
   taskId?: string
-  urlHash?: string
 }
 
 const uploadToSignedUrl = async (
@@ -146,29 +145,27 @@ export const savePageJob = async (data: Data, attemptsMade: number) => {
     finalUrl,
     title,
     contentType,
-    urlHash,
+    state,
   } = data
-  let isImported,
-    isSaved,
-    state = data.state
+  let isImported, isSaved
 
-  try {
-    logger.info('savePageJob', {
+  logger.info('savePageJob', {
+    userId,
+    url,
+    finalUrl,
+  })
+
+  const user = await userRepository.findById(userId)
+  if (!user) {
+    logger.error('Unable to save job, user can not be found.', {
       userId,
       url,
-      finalUrl,
     })
+    // if the user is not found, we do not retry
+    return false
+  }
 
-    const user = await userRepository.findById(userId)
-    if (!user) {
-      logger.error('Unable to save job, user can not be found.', {
-        userId,
-        url,
-      })
-      // if the user is not found, we do not retry
-      return false
-    }
-
+  try {
     // for pdf content, we need to upload the pdf
     if (contentType === 'application/pdf') {
       const uploadResult = await uploadPdf(
@@ -181,7 +178,7 @@ export const savePageJob = async (data: Data, attemptsMade: number) => {
         {
           url: finalUrl,
           uploadFileId: uploadResult.uploadFileId,
-          state: state ? (state as ArticleSavingRequestStatus) : undefined,
+          state: (state as ArticleSavingRequestStatus) || undefined,
           labels,
           source,
           folder,
@@ -201,25 +198,8 @@ export const savePageJob = async (data: Data, attemptsMade: number) => {
       return true
     }
 
-    let originalContent
-    if (!urlHash) {
-      logger.info(`content is not uploaded: ${finalUrl}`)
-      // set the state to failed if we don't have content
-      originalContent = 'Failed to fetch content'
-      state = ArticleSavingRequestStatus.Failed
-    } else {
-      // download content from the bucket
-      const downloaded = await downloadStringFromBucket(
-        `originalContent/${urlHash}`
-      )
-      if (!downloaded) {
-        logger.error('error while downloading content from bucket')
-        originalContent = 'Failed to fetch content'
-        state = ArticleSavingRequestStatus.Failed
-      } else {
-        originalContent = downloaded
-      }
-    }
+    // download content from the bucket
+    const originalContent = (await downloadOriginalContent(finalUrl)).toString()
 
     // for non-pdf content, we need to save the page
     const result = await savePage(
@@ -228,8 +208,8 @@ export const savePageJob = async (data: Data, attemptsMade: number) => {
         clientRequestId: articleSavingRequestId,
         title,
         originalContent,
-        state: state ? (state as ArticleSavingRequestStatus) : undefined,
-        labels: labels,
+        state: (state as ArticleSavingRequestStatus) || undefined,
+        labels,
         rssFeedUrl,
         savedAt: savedAt ? new Date(savedAt) : new Date(),
         publishedAt: publishedAt ? new Date(publishedAt) : null,
@@ -255,8 +235,25 @@ export const savePageJob = async (data: Data, attemptsMade: number) => {
     throw e
   } finally {
     const lastAttempt = attemptsMade === MAX_ATTEMPTS - 1
-    if (lastAttempt) {
+    if (lastAttempt && !isSaved) {
       logger.info(`last attempt reached ${data.url}`)
+
+      await savePage(
+        {
+          url: finalUrl,
+          clientRequestId: articleSavingRequestId,
+          title,
+          originalContent: '',
+          state: ArticleSavingRequestStatus.Failed,
+          labels,
+          rssFeedUrl,
+          savedAt: savedAt ? new Date(savedAt) : new Date(),
+          publishedAt: publishedAt ? new Date(publishedAt) : null,
+          source,
+          folder,
+        },
+        user
+      )
     }
 
     if (taskId && (isSaved || lastAttempt)) {

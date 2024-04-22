@@ -305,7 +305,6 @@ export const createArticleResolver = authorized<
         userId: uid,
         slug,
         croppedPathname,
-        originalHtml: domContent,
         itemType,
         preparedDocument,
         uploadFileHash,

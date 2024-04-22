@@ -113,23 +113,18 @@ export const createGCSFile = (filename: string): File => {
   return storage.bucket(bucketName).file(filename)
 }
 
-export const downloadStringFromBucket = async (
+export const downloadFileFromBucket = async (
   filePath: string
-): Promise<string | null> => {
-  try {
-    const file = storage.bucket(bucketName).file(filePath)
+): Promise<Buffer> => {
+  const file = storage.bucket(bucketName).file(filePath)
 
-    const [exists] = await file.exists()
-    if (!exists) {
-      logger.error(`File not found: ${filePath}`)
-      return null
-    }
-
-    // Download the file contents as a string
-    const [data] = await file.download()
-    return data.toString()
-  } catch (error) {
-    logger.info('Error downloading file:', error)
-    return null
+  const [exists] = await file.exists()
+  if (!exists) {
+    logger.error(`File not found: ${filePath}`)
+    throw new Error('File not found')
   }
+
+  // Download the file contents as a string
+  const [data] = await file.download()
+  return data
 }
