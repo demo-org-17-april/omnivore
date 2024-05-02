@@ -150,3 +150,5 @@ export const sendPushNotifications = async (
 
   return sendMulticastPushNotifications(userId, message, notificationType)
 }
+
+export const isDiscoverUser = (user: User) => user.name === 'omnivore_discover'
