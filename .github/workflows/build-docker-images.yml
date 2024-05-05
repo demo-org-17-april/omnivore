@@ -7,6 +7,9 @@ on:
       - 'apple/**'
       - 'android/**'
 
+permissions:
+  contents: read
+
 jobs:
   build-docker-images:
     name: Build docker images
